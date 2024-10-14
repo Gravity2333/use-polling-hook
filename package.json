@@ -1,6 +1,6 @@
 {
   "name": "use-polling-hook",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "usePolling hook 可以帮助你快速创建轮询任务，并且帮助你处理复杂的 loading 变化。（仅在参数变动时，改变 loading 的值，避免渲染闪烁）",
   "main": "public/index.js",
   "scripts": {

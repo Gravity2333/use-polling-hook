@@ -2,47 +2,89 @@ import { useEffect } from 'react';
 import type { UseVariableParams } from 'use-variable-hook';
 import useVariable from 'use-variable-hook';
 import useDeepEffect from './hooks/useDeepEffect';
+import { generateUUID } from './utils/unique';
 import { createUpdateKeyGenerator } from './utils/update';
-
-const updateKeyGenerator = createUpdateKeyGenerator();
-
-const PollingVariables: UseVariableParams = {
-  variables: {
-    pollingLoading: false,
-    oldDependency: [],
-    intervalInstance: null,
-    updateKey: updateKeyGenerator(),
-  },
-  reducers: {
-    polling(store, { payload: { params, pollingFn, interval } }) {
-      /** clear当前计时器 */
-      if (store.intervalInstance) {
-        clearInterval(store.intervalInstance);
-        store.intervalInstance = null;
-        store.pollingLoading = false;
-      }
-      store.pollingLoading = true;
-      const pollingTask = () => {
-        (pollingFn(params) as Promise<any>).finally(() => {
-          if (store.pollingLoading === true) {
-            store.pollingLoading = false;
-          }
-        });
-      };
-      pollingTask();
-      store.intervalInstance = setInterval(pollingTask, interval);
-    },
-    cancelPolling(store) {
-      clearInterval(store.intervalInstance);
-    },
-  },
-};
+import type {StoreObject} from 'use-variable-hook'
 
 type PollingvariableType = {
   pollingLoading: boolean;
   oldDependency: any[];
-  intervalInstance: NodeJS.Timer;
   updateKey: number;
+};
+
+type PollingParams = {
+  // 查询函数
+  pollingFn: (arg: any) => Promise<any>;
+  // 参数
+  params?: any;
+  interval: number;
+};
+
+const updateKeyGenerator = createUpdateKeyGenerator();
+
+const PollingVariablesCreator = () => {
+  /** 计时器实例 */
+  let timerInstance: any = null;
+  /** 请求函数返回的promise */
+  let pollingTaskPromise: any = null;
+  /**当前任务Key */
+  let currentTaskKey: string = '';
+  /** 运行task */
+  function _runTask(_store: StoreObject, { params, pollingFn, interval }: PollingParams) {
+    if (timerInstance) {
+      clearTimeout(timerInstance);
+      timerInstance = null;
+      _store.pollingLoading = false;
+    }
+    _store.pollingLoading = true;
+
+    const taskKey = generateUUID();
+    currentTaskKey = taskKey;
+
+    const _pollingTask = () => {
+      pollingTaskPromise = (pollingFn(params) as Promise<any>).finally(() => {
+        const dirty = taskKey !== currentTaskKey;
+        if (!dirty) {
+          if (_store.pollingLoading === true) {
+            _store.pollingLoading = false;
+          }
+        }
+      });
+      return pollingTaskPromise;
+    };
+
+    const _handleThen = function () {
+      if (taskKey !== currentTaskKey) return;
+      timerInstance = setTimeout(() => {
+        if (taskKey !== currentTaskKey) return;
+        _pollingTask().then(_handleThen);
+      }, interval);
+    };
+
+    if (pollingTaskPromise && pollingTaskPromise instanceof Promise) {
+      pollingTaskPromise.finally(() => {
+        _pollingTask().then(_handleThen);
+      });
+    } else {
+      _pollingTask().then(_handleThen);
+    }
+  }
+
+  return {
+    variables: {
+      pollingLoading: false,
+      oldDependency: [],
+      updateKey: updateKeyGenerator(),
+    },
+    reducers: {
+      polling(store, { payload }) {
+        _runTask(store, payload);
+      },
+      cancelPolling() {
+        clearTimeout(timerInstance);
+      },
+    },
+  } as UseVariableParams;
 };
 
 /** 轮巡hook */
@@ -53,14 +95,8 @@ export default function usePolling({
   params = {},
   // 默认1s查询一次
   interval = 1000,
-}: {
-  // 查询函数
-  pollingFn: (...args: any[]) => Promise<any>;
-  // 参数
-  params?: any;
-  interval: number;
-}) {
-  const [store, dispatch] = useVariable<PollingvariableType>(PollingVariables);
+}: PollingParams) {
+  const [store, dispatch] = useVariable<PollingvariableType>(PollingVariablesCreator);
 
   useDeepEffect(() => {
     /** 重新设置计时器 */
